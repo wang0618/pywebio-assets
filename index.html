@@ -1,0 +1,113 @@
+<!doctype html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>Interactive notebook</title>
+
+    <link href="css/mditor.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.4.1/dist/css/bootstrap.min.css"
+          integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+    <link rel="stylesheet" href="css/codemirror.css">
+    <link rel="stylesheet" href="codemirror/darcula.css">
+    <link rel="stylesheet" href="codemirror/material-ocean.css">
+    <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="container no-fix-height">
+    <div tabindex="1" class="mditor preview">
+        <div class="head">
+            <ul class="toolbar">
+                <span id="title">Interactive notebook</span>
+            </ul>
+        </div>
+        <div class="body">
+            <div class="viewer">
+                <div class="markdown-body" id="markdown-body">
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="input-container">
+
+    </div>
+</div>
+
+<script src="js/mustache.min.js"></script>
+
+<script src="js/codemirror.js"></script>
+<script src="codemirror/matchbrackets.js"></script>
+<script src="codemirror/python.js"></script>
+<script src="codemirror/loadmode.js"></script>
+<script src="codemirror/active-line.js"></script>
+
+<script src="js/mditor.min.js"></script>
+<script src="js/form.js"></script>
+<script src="js/FileSaver.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.4.1/dist/jquery.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"
+        integrity="sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.4.1/dist/js/bootstrap.min.js"
+        integrity="sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
+        crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/bs-custom-file-input/dist/bs-custom-file-input.js"></script>
+
+<script>
+
+    /*
+    * Check given `backend_addr` is a http backend
+    * Usage:
+    *   // `http_backend` is a boolean to present whether or not a http_backend the given `backend_addr` is
+    *   is_http_backend('http://localhost:8080/io').then(function(http_backend){ });
+    * */
+    function is_http_backend(backend_addr) {
+        var url = new URL(backend_addr);
+        var protocol = url.protocol || window.location.protocol;
+        url.protocol = protocol.replace('wss', 'https').replace('ws', 'http');
+        backend_addr = url.href;
+
+        return new Promise(function (resolve, reject) {
+            $.get(backend_addr, {test: 1}, 'html').done(function (data) {
+                resolve(data === 'ok');
+            }).fail(function (e) {
+                resolve(false);
+            });
+        });
+    }
+
+    $(document).ready(function () {
+        // https://www.npmjs.com/package/bs-custom-file-input
+        bsCustomFileInput.init()
+    });
+
+    // 获取后端API地址
+    function get_backend_addr() {
+        const url = new URLSearchParams(window.location.href);
+        var uri = url.get('_pywebio_addr') || './io';
+        return new URL(uri, window.location.href).href;
+    }
+
+    CodeMirror.modeURL = "https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.52.2/mode/%N/%N.min.js";
+
+    var md_body = $('#markdown-body');
+
+    const debug = new URLSearchParams(window.location.href).get('_pywebio_debug');
+    const backend_addr = get_backend_addr();
+    is_http_backend(backend_addr).then(function (http_backend) {
+        var session;
+        if (http_backend)
+            session = new WebIO.HttpWebIOSession(backend_addr);
+        else
+            session = new WebIO.WebSocketWebIOSession(backend_addr);
+        var ctrl = new WebIO.WebIOController(session, md_body, $('#input-container'));
+        session.start_session(debug);
+    });
+
+
+</script>
+
+
+</body>
+</html>
