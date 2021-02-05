@@ -89,7 +89,40 @@
         };
     }
 
+
+    // container 为带有滚动条的元素
+    function body_scroll_to(target, position = 'top', complete, offset = 0) {
+        var scrollTop = null;
+        if (position === 'top')
+            scrollTop = target.offset().top;
+        else if (position === 'middle')
+            scrollTop = target.offset().top + 0.5 * target[0].clientHeight - 0.5 * $(window).height();
+        else if (position === 'bottom')
+            scrollTop = target[0].clientHeight + target.offset().top - $(window).height();
+
+        var container = $('body,html');
+        var speed = Math.abs(container.scrollTop() - scrollTop - offset);
+        if (scrollTop !== null)
+            container.stop().animate({scrollTop: scrollTop + offset}, Math.min(speed, 500) + 100, complete);
+    }
+
+    // container 为带有滚动条的元素
+    function box_scroll_to(target, container, position = 'top', complete, offset = 0) {
+        var scrollTopOffset = null;
+        if (position === 'top')
+            scrollTopOffset = target[0].getBoundingClientRect().top - container[0].getBoundingClientRect().top;
+        else if (position === 'middle')
+            scrollTopOffset = target[0].getBoundingClientRect().top - container[0].getBoundingClientRect().top - container.height() * 0.5 + target.height() * 0.5;
+        else if (position === 'bottom')
+            scrollTopOffset = target[0].getBoundingClientRect().bottom - container[0].getBoundingClientRect().bottom;
+
+        var speed = Math.min(Math.abs(scrollTopOffset + offset), 500) + 100;
+        if (scrollTopOffset !== null)
+            container.stop().animate({scrollTop: container.scrollTop() + scrollTopOffset + offset}, speed, complete);
+    }
+
     var AutoScrollBottom = true;  // 是否有新内容时自动滚动到底部
+    var OutputFixedHeight = false;  // 是否固定输出区域宽度
 
     OutputController.prototype.accept_command = ['output', 'output_ctl'];
 
@@ -103,15 +136,15 @@
     }
 
     OutputController.prototype.scroll_bottom = function () {
-        this.container_parent.stop().animate({scrollTop: this.container_parent[0].scrollHeight}, 700);
-        var that = this;
-        setTimeout(function () {
-            // body.scrollTop(body[0].scrollHeight);  // 整个页面自动滚动
-            that.body.stop().animate({scrollTop: that.body[0].scrollHeight}, 700);
-        }, ShowDuration + 10);
+        // 固定高度窗口滚动
+        if (OutputFixedHeight)
+            box_scroll_to(this.container_elem, this.container_parent, 'bottom', null, 30);
+        // 整个页面自动滚动
+        body_scroll_to(this.container_parent, 'bottom');
     };
 
     OutputController.prototype.handle_message = function (msg) {
+        var scroll_bottom = false;
         if (msg.command === 'output') {
             const func_name = `get_${msg.spec.type}_element`;
             if (!(func_name in OutputController.prototype)) {
@@ -119,23 +152,30 @@
             }
 
             var elem = OutputController.prototype[func_name].call(this, msg.spec);
-            if (msg.spec.anchor !== undefined) {
-                this.container_elem.find(`#${msg.spec.anchor}`).attr('id', '');
-                elem.attr('id', msg.spec.anchor);
-            }
-
-            if (msg.spec.before !== undefined) {
-                this.container_elem.find('#' + msg.spec.before).before(elem);
-            } else if (msg.spec.after !== undefined) {
-                this.container_elem.find('#' + msg.spec.after).after(elem);
+            elem.hide();
+            if (msg.spec.anchor !== undefined && this.container_elem.find(`#${msg.spec.anchor}`).length) {
+                var pos = this.container_elem.find(`#${msg.spec.anchor}`);
+                pos.empty().append(elem);
+                elem.unwrap().attr('id', msg.spec.anchor);
             } else {
-                this.container_elem.append(elem);
+                if (msg.spec.anchor !== undefined)
+                    elem.attr('id', msg.spec.anchor);
+
+                if (msg.spec.before !== undefined) {
+                    this.container_elem.find('#' + msg.spec.before).before(elem);
+                } else if (msg.spec.after !== undefined) {
+                    this.container_elem.find('#' + msg.spec.after).after(elem);
+                } else {
+                    this.container_elem.append(elem);
+                    scroll_bottom = true;
+                }
             }
+            elem.fadeIn();
         } else if (msg.command === 'output_ctl') {
             this.handle_output_ctl(msg);
         }
-        // 当设置了AutoScrollBottom、并且不指定锚点进行输出时，滚动到底部
-        if (AutoScrollBottom && msg.command !== 'output_ctl' && msg.spec.before === undefined && msg.spec.after === undefined)
+        // 当设置了AutoScrollBottom、并且当前输出输出到页面末尾时，滚动到底部
+        if (AutoScrollBottom && scroll_bottom)
             this.scroll_bottom();
     };
 
@@ -156,7 +196,11 @@
     };
 
     OutputController.prototype.get_html_element = function (spec) {
-        return $($.parseHTML(spec.content));
+        var nodes = $.parseHTML(spec.content, null, true);
+        var elem = $(nodes);
+        if (nodes.length > 1)
+            elem = $('<div><div/>').append(elem);
+        return elem;
     };
 
     OutputController.prototype.get_buttons_element = function (spec) {
@@ -183,11 +227,13 @@
             $('#title').text(msg.spec.title);  // 直接使用#title不规范 todo
             document.title = msg.spec.title;
         }
-        if (msg.spec.output_fixed_height !== undefined)
+        if (msg.spec.output_fixed_height !== undefined) {
+            OutputFixedHeight = msg.spec.output_fixed_height;
             if (msg.spec.output_fixed_height)
                 $('.container').removeClass('no-fix-height');  // todo 不规范
             else
                 $('.container').addClass('no-fix-height');  // todo 不规范
+        }
         if (msg.spec.auto_scroll_bottom !== undefined)
             AutoScrollBottom = msg.spec.auto_scroll_bottom;
         if (msg.spec.set_anchor !== undefined) {
@@ -198,20 +244,35 @@
             this.container_elem.find(`#${msg.spec.clear_before}`).prevAll().remove();
         if (msg.spec.clear_after !== undefined)
             this.container_elem.find(`#${msg.spec.clear_after}~*`).remove();
-        if (msg.spec.scroll_to !== undefined)
-            $([document.documentElement, document.body]).animate({
-                scrollTop: $(`#${msg.spec.scroll_to}`).offset().top
-            }, 400);
+        if (msg.spec.scroll_to !== undefined) {
+            var target = $(`#${msg.spec.scroll_to}`);
+            if (OutputFixedHeight) {
+                box_scroll_to(target, this.container_parent, msg.spec.position);
+            } else {
+                body_scroll_to(target, msg.spec.position);
+            }
+        }
         if (msg.spec.clear_range !== undefined) {
             if (this.container_elem.find(`#${msg.spec.clear_range[0]}`).length &&
                 this.container_elem.find(`#${msg.spec.clear_range[1]}`).length) {
+                let removed = [];
+                let valid = false;
                 this.container_elem.find(`#${msg.spec.clear_range[0]}~*`).each(function () {
-                    if (this.id === msg.spec.clear_range[1])
+                    if (this.id === msg.spec.clear_range[1]) {
+                        valid = true;
                         return false;
-                    $(this).remove();
+                    }
+                    removed.push(this);
+                    // $(this).remove();
                 });
+                if (valid)
+                    $(removed).remove();
+                else
+                    console.warn(`clear_range not valid: can't find ${msg.spec.clear_range[1]} after ${msg.spec.clear_range[0]}`);
             }
         }
+        if (msg.spec.remove !== undefined)
+            this.container_elem.find(`#${msg.spec.remove}`).remove();
     };
 
     // 显示区按钮点击回调函数
@@ -237,17 +298,28 @@
 
         this.form_ctrls = new LRUMap(); // task_id -> stack of FormGroupController
 
+        var this_ = this;
+        this._after_show_form = function () {
+            if (!AutoScrollBottom)
+                return;
+
+            if (this_.container_elem.height() > $(window).height())
+                body_scroll_to(this_.container_elem, 'top', () => {
+                    $('[auto_focus="true"]').focus();
+                });
+            else
+                body_scroll_to(this_.container_elem, 'bottom', () => {
+                    $('[auto_focus="true"]').focus();
+                });
+        };
+
         // hide old_ctrls显示的表单，激活 task_id 对应的表单
         // 需要保证 task_id 对应有表单
         this._activate_form = function (task_id, old_ctrl) {
             var ctrls = this.form_ctrls.get_value(task_id);
             var ctrl = ctrls[ctrls.length - 1];
             if (ctrl === old_ctrl || old_ctrl === undefined) {
-                console.log('开：%s', ctrl.spec.label);
-                return ctrl.element.show(ShowDuration, function () {
-                    if (AutoScrollBottom)
-                        $('[auto_focus]').focus();
-                });
+                return ctrl.element.show(ShowDuration, this_._after_show_form);
             }
             this.form_ctrls.move_to_top(task_id);
             var that = this;
@@ -255,27 +327,14 @@
                 // ctrl.element.show(100);
                 // 需要在回调中重新获取当前前置表单元素，因为100ms内可能有变化
                 var t = that.form_ctrls.get_top();
-                if (t) t[t.length - 1].element.show(ShowDuration, function () {
-                    if (AutoScrollBottom)
-                        $('[auto_focus]').focus();
-                });
+                if (t) t[t.length - 1].element.show(ShowDuration, this_._after_show_form);
             });
         };
 
-        // var that = this;
-        // this.msg_queue = async.queue((msg) => {
-        //     that.consume_message(msg)
-        // }, 1);
-        //
-        // var l = new Lock(this.consume_message);
-
         this.handle_message_ = function (msg) {
-            // this.msg_queue.push(msg);
-            // l.mutex_run(that, msg);
             // console.log('start handle_message %s %s', msg.command, msg.spec.label);
             this.consume_message(msg);
             // console.log('end handle_message %s %s', msg.command, msg.spec.label);
-
         };
 
 
@@ -319,10 +378,7 @@
                     deleted.element.hide(100, () => {
                         deleted.element.remove();
                         var t = that.form_ctrls.get_top();
-                        if (t) t[t.length - 1].element.show(ShowDuration, function () {
-                            if (AutoScrollBottom)
-                                $('[auto_focus]').focus();
-                        });
+                        if (t) t[t.length - 1].element.show(ShowDuration, this_._after_show_form);
                     });
                 } else {
                     deleted.element.remove();
@@ -365,13 +421,23 @@
                     <div class="ws-form-submit-btns">
                         <button type="submit" class="btn btn-primary">提交</button>
                         <button type="reset" class="btn btn-warning">重置</button>
+                        {{#cancelable}}<button type="button" class="pywebio_cancel_btn btn btn-danger">取消</button>{{/cancelable}}
                     </div>
                 </form>
             </div>
         </div>`;
+        var that = this;
 
-        const html = Mustache.render(tpl, {label: this.spec.label});
+        const html = Mustache.render(tpl, {label: this.spec.label, cancelable: this.spec.cancelable});
         this.element = $(html);
+
+        this.element.find('.pywebio_cancel_btn').on('click', function (e) {
+            that.webio_session.send_message({
+                event: "from_cancel",
+                task_id: that.task_id,
+                data: null
+            });
+        });
 
         // 如果表单最后一个输入元素为actions组件，则隐藏默认的"提交"/"重置"按钮
         if (this.spec.inputs.length && this.spec.inputs[this.spec.inputs.length - 1].type === 'actions')
@@ -399,7 +465,6 @@
         }
 
         // 事件绑定
-        var that = this;
         this.element.on('submit', 'form', function (e) {
             e.preventDefault(); // avoid to execute the actual submit of the form.
             var data = {};
@@ -463,7 +528,7 @@
                 }
             }
 
-            var input_elem = this.element.find('input,select');
+            var input_elem = this.element.find('input,select,textarea');
             if (input_idx >= 0)
                 input_elem = input_elem.eq(input_idx);
 
@@ -505,7 +570,7 @@
     const select_input_tpl = `
 <div class="form-group">
     {{#label}}<label for="{{id_name}}">{{label}}</label>{{/label}}
-    <select id="{{id_name}}" aria-describedby="{{id_name}}_help" class="form-control">
+    <select id="{{id_name}}" aria-describedby="{{id_name}}_help" class="form-control" {{#multiple}}multiple{{/multiple}}>
         {{#options}}
         <option value="{{value}}" {{#selected}}selected{{/selected}} {{#disabled}}disabled{{/disabled}}>{{label}}</option>
         {{/options}}
@@ -541,7 +606,8 @@
             'valid_feedback': '',
             'help_text': '',
             'options': '',
-            'datalist': ''
+            'datalist': '',
+            'multiple': ''
         };
         for (var key in this.spec) {
             if (key in ignore_keys) continue;
@@ -607,29 +673,38 @@
         }
         if (spec.code) {
             var that = this;
-            setTimeout(function () {
-                var config = {
-                    'mode': 'python',
-                    'lineNumbers': true,  // 显示行数
-                    'indentUnit': 4,  //缩进单位为4
-                    'styleActiveLine': true,  // 当前行背景高亮
-                    'matchBrackets': true,  //括号匹配
-                    'lineWrapping': true,  //自动换行
-                };
-                for (var k in that.spec.code) config[k] = that.spec.code[k];
+            var config = {
+                'theme': 'base16-light',
+                'mode': 'python',
+                'lineNumbers': true,  // 显示行数
+                'indentUnit': 4,  //缩进单位为4
+                'styleActiveLine': true,  // 当前行背景高亮
+                'matchBrackets': true,  //括号匹配
+                'lineWrapping': true,  //自动换行
+            };
+            for (var k in that.spec.code)
+                config[k] = that.spec.code[k];
+
+            CodeMirror.autoLoadMode(that.code_mirror, config.mode);
+            if (config.theme && config.theme !== 'base16-light')
+                load_codemirror_theme(config.theme);
+
+            setTimeout(function () {  // 需要等待当前表单被添加到文档树中后，再初始化CodeMirror，否则CodeMirror样式会发生错误
                 that.code_mirror = CodeMirror.fromTextArea(that.element.find('textarea')[0], config);
                 that.code_mirror.setSize(null, 20 * that.spec.rows);
-                CodeMirror.autoLoadMode(that.code_mirror, config.mode);
-                if (config.theme)
-                    load_codemirror_theme(config.theme);
-            }, ShowDuration + 20);
+            }, 100);
+
+            setTimeout(function () {  // 需要等待当前表单显示后，重新计算表单高度
+                // 重新计算表单高度
+                that.element.parents('.card').height('auto');
+            }, ShowDuration);
         }
     };
 
     TextareaInputController.prototype.update_input = function (spec) {
         var attributes = spec.attributes;
 
-        this.update_input_helper(-1, attributes);
+        this.update_input_helper.call(this, -1, attributes);
     };
 
     TextareaInputController.prototype.get_value = function () {
@@ -704,7 +779,7 @@
 
     CheckboxRadioController.prototype.get_value = function () {
         if (this.spec.type === 'radio') {
-            return this.element.find('input').val();
+            return this.element.find('input:checked').val() || '';
         } else {
             var value_arr = this.element.find('input').serializeArray();
             var res = [];
@@ -720,7 +795,7 @@
     function ButtonsController(webio_session, task_id, spec) {
         FormItemController.apply(this, arguments);
 
-        this.last_checked_value = null;  // 上次点击按钮的value
+        this.submit_value = null;  // 提交表单时按钮组的value
         this.create_element();
     }
 
@@ -730,7 +805,7 @@
 <div class="form-group">
     {{#label}}<label>{{label}}</label>  <br> {{/label}} 
     {{#buttons}}
-    <button type="submit" value="{{value}}" aria-describedby="{{name}}_help" {{#disabled}}disabled{{/disabled}} class="btn btn-primary">{{label}}</button>
+    <button type="{{btn_type}}" data-type="{{type}}" value="{{value}}" aria-describedby="{{name}}_help" {{#disabled}}disabled{{/disabled}} class="btn btn-primary">{{label}}</button>
     {{/buttons}}
     <div class="invalid-feedback">{{invalid_feedback}}</div>  <!-- input 添加 is-invalid 类 -->
     <div class="valid-feedback">{{valid_feedback}}</div> <!-- input 添加 is-valid 类 -->
@@ -738,14 +813,28 @@
 </div>`;
 
     ButtonsController.prototype.create_element = function () {
+        for (var b of this.spec.buttons) b['btn_type'] = b.type === "submit" ? "submit" : "button";
+
         const html = Mustache.render(buttons_tpl, this.spec);
         this.element = $(html);
 
-        // todo：是否有必要监听click事件，因为点击后即提交了表单
         var that = this;
         this.element.find('button').on('click', function (e) {
             var btn = $(this);
-            that.last_checked_value = btn.val();
+            if (btn.data('type') === 'submit') {
+                that.submit_value = btn.val();
+                // 不可以使用 btn.parents('form').submit()， 会导致input 的required属性失效
+            } else if (btn.data('type') === 'reset') {
+                btn.parents('form').trigger("reset");
+            } else if (btn.data('type') === 'cancel') {
+                that.webio_session.send_message({
+                    event: "from_cancel",
+                    task_id: that.task_id,
+                    data: null
+                });
+            } else {
+                console.error("`actions` input: unknown button type '%s'", btn.data('type'));
+            }
         });
     };
 
@@ -764,7 +853,7 @@
     };
 
     ButtonsController.prototype.get_value = function () {
-        return this.last_checked_value;
+        return this.submit_value;
     };
 
     function FileInputController(webio_session, task_id, spec) {
@@ -965,8 +1054,8 @@
     function WebIOController(webio_session, output_container_elem, input_container_elem) {
         WebIOSession_ = webio_session;
         webio_session.on_session_close = function () {
-            document.title = 'Closed';
-            $('#title').text('Closed');  // todo
+            $('#favicon32').attr('href', 'data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAByElEQVRYR82XLUzDUBDH/9emYoouYHAYMGCAYJAYEhxiW2EOSOYwkKBQKBIwuIUPN2g7gSPBIDF8GWbA4DAjG2qitEfesi6lbGxlXd5q393/fr333t07QpdfPp8f0nV9CcACEU0DGAOgN9yrAN6Y+QnATbVavcrlcp/dSFMnI9M0J1RV3WHmFQCJTvaN9RoRXbiuu28YxstfPm0BbNtOMPMeEW0C0LoMHDZzmPmIiHbT6XStlUZLgEKhMK5p2iWAyX8GDruVHMdZzmazr+GFXwCmac4oinINYCSm4L5M2fO8RcMwHoO6PwAaf37bh+BNCMdx5oOZaAKIPQdwF2Pa2yWwBGDOPxNNAMuyDohoK+a0t5Rj5sNMJrMtFusA4qopivLcw2mPyu14njclrmgdoFgsnjLzWlSVXuyJ6CyVSq2TqHDJZPI9QpHpJW7Qt1apVEbJsqwVIjqPSzWKDjOvCoBjItqI4hiXLTOfkG3b9wBm4xKNqPMgAMoAhiM6xmX+IQC+AKhxKUbUcQcCQPoWyD2E0q+h9EIkvRRLb0YD0Y4FhNQHiQCQ/iQTEFIfpX4Nl/os9yGkDiY+hNTRLNhSpQ2n4b7er/H8G7N6BRSbHvW5AAAAAElFTkSuQmCC');
+            $('#favicon16').attr('href', 'data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA0ElEQVQ4T62TPQrCQBCF30tA8BZW9mJtY+MNEtKr2HkWK0Xtw+4NbGysxVorbyEKyZMNRiSgmJ/tZufNNzO7M0ThxHHc8zxvSnIIoPNyXyXt0zRdR1F0+gxhblhr25IWJMcA3vcFviRtSc6DILg5XyZ0wQB2AAbFir7YBwAjB8kAxpg1ycmfwZlM0iYMwyldz77vH3+U/Y2rJEn6NMYsSc7KZM+1kla01p4BdKsAAFwc4A6gVRHwaARQr4Xaj1j7G2sPUiOjnEMqL9PnDJRd5ycpJXsd2f2NIAAAAABJRU5ErkJggg==');
         };
 
         this.output_ctrl = new OutputController(webio_session, output_container_elem);
