@@ -111,13 +111,20 @@ button {
     margin-bottom: 8px;
 }
 
-td blockquote, td dl, td ol, td p, td pre, td table, td ul, td button, td pre {
+td blockquote, td dl, td ol, td p, td pre, td table, td ul, td button, .form-group button, td pre {
     margin-bottom: 0 !important;
 }
 
+.form-group {
+    margin-bottom: 0.4rem;
+}
 
-.input-container .form-group {
-    margin-bottom: 0;
+.form-group label {
+    margin-bottom: 0px;
+}
+
+#input-container .card-body {
+    padding: 0.8rem 1.25rem;
 }
 
 img {
@@ -125,6 +132,11 @@ img {
     animation-name: image-load-in;
     -webkit-animation-duration: .6s;
     animation-duration: .6s
+}
+
+.no-animation img {
+    -webkit-animation-name: none;
+    animation-name: none
 }
 
 @-webkit-keyframes image-load-in {
